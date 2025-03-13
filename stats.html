@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estadísticas de Telemetría</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        #grafico {
+            width: 50vw;
+            height: 50vh;
+        }
+        .rango-y {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h2>Seleccionar Dispositivo y Parámetro</h2>
+
+    <label for="dispositivo">Dispositivo:</label>
+    <select id="dispositivo">
+        <option value="">Cargando dispositivos...</option>
+    </select>
+
+    <label for="parametro">Parámetro:</label>
+    <select id="parametro">
+        <option value="12">Voltaje R</option>
+        <option value="16">Voltaje S</option>
+        <option value="20">Voltaje T</option>
+        <option value="13">Corriente R</option>
+        <option value="17">Corriente S</option>
+        <option value="21">Corriente T</option>
+        <option value="34">Temperatura Cuba</option>
+        <option value="33">Temperatura Dispositivo</option>
+        <option value="11">Temperatura MPU</option>
+        <option value="26">Bateria</option>
+        <option value="35">Alertas</option>
+    </select>
+
+    <div class="rango-y">
+        <label for="yMin">Mínimo del eje Y:</label>
+        <input type="number" id="yMin" value="0">
+        <label for="yMax">Máximo del eje Y:</label>
+        <input type="number" id="yMax" value="300">
+    </div>
+
+    <button id="botonAgregar">Agregar al Gráfico</button>
+    <canvas id="grafico"></canvas>
+
+    <script>
+        const apiUrl = "http://181.13.147.14:55999/apitele/apitele/read";
+        let datasets = [];
+        let colores = ["blue", "red", "green", "purple"];
+
+        async function cargarDispositivos() {
+            try {
+                const response = await fetch(apiUrl);
+                if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+
+                const datosAPI = await response.json();
+                let dispositivosUnicos = new Set();
+                datosAPI.forEach(dato => {
+                    if (Array.isArray(dato) && dato.length > 0 && dato[0] !== null) {
+                        dispositivosUnicos.add(dato[0]);
+                    }
+                });
+
+                let selectDispositivo = document.getElementById("dispositivo");
+                selectDispositivo.innerHTML = "";
+
+                dispositivosUnicos.forEach(imei => {
+                    let option = document.createElement("option");
+                    option.value = imei;
+                    option.textContent = imei;
+                    selectDispositivo.appendChild(option);
+                });
+            } catch (error) {
+                console.error("Error obteniendo dispositivos:", error);
+            }
+        }
+
+        function generarGrafico() {
+            let ctx = document.getElementById("grafico").getContext("2d");
+            if (window.miGrafico) {
+                window.miGrafico.destroy();
+            }
+
+            let yMin = parseFloat(document.getElementById("yMin").value);
+            let yMax = parseFloat(document.getElementById("yMax").value);
+
+            window.miGrafico = new Chart(ctx, {
+                type: "line",
+                data: { labels: datasets.length > 0 ? datasets[0].data.map(d => d.x) : [], datasets: datasets },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { title: { display: true, text: "Tiempo" } },
+                        y: { title: { display: true, text: "Valor" }, min: yMin, max: yMax }
+                    }
+                }
+            });
+        }
+
+        async function agregarCurva() {
+            let dispositivoSeleccionado = document.getElementById("dispositivo").value;
+            let parametroSeleccionado = document.getElementById("parametro").value;
+            let parametroTexto = document.getElementById("parametro").selectedOptions[0].text;
+
+            if (!dispositivoSeleccionado) {
+                alert("Seleccione un dispositivo");
+                return;
+            }
+            if (datasets.length >= 4) {
+                alert("Solo se pueden agregar hasta 4 curvas");
+                return;
+            }
+
+            try {
+                const response = await fetch(apiUrl);
+                if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+                const datosAPI = await response.json();
+                
+                let datosFiltrados = datosAPI.filter(dato => {
+                    return Array.isArray(dato) && dato.length > 0 && dato[0] === dispositivoSeleccionado;
+                });
+
+                if (datosFiltrados.length === 0) {
+                    alert("⚠️ No hay datos para este dispositivo.");
+                    return;
+                }
+
+                let datosGrafico = datosFiltrados.map(dato => {
+                    let valor = parseFloat(dato[parametroSeleccionado]);
+                    if (isNaN(valor)) valor = 0;
+                    return { x: dato[3] + " " + dato[4], y: valor };
+                });
+
+                let color = colores[datasets.length];
+                datasets.push({
+                    label: `Evolución de ${parametroTexto}`,
+                    data: datosGrafico,
+                    borderColor: color,
+                    borderWidth: 2,
+                    fill: false
+                });
+
+                generarGrafico();
+            } catch (error) {
+                console.error("🚨 Error obteniendo datos:", error);
+                alert("Error al obtener los datos.");
+            }
+        }
+
+        document.getElementById("botonAgregar").addEventListener("click", agregarCurva);
+        cargarDispositivos();
+    </script>
+</body>
+</html>

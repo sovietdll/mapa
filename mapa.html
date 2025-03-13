@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa de Telemetría</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<script>
+    var map = L.map('map').setView([0, 0], 10);
+
+    // Agregar capa de OpenStreetMap
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Agregar un marcador inicial
+    var marker = L.marker([0, 0]).addTo(map);
+
+    // convertir coordenadas DMM a DD
+    function convertirDMMaDD(coordenada) {
+        let grados = Math.floor(coordenada / 100);
+        let minutos = coordenada % 100;
+        return grados + (minutos / 60);
+    }
+    var coordenadasHistoricas = [];
+
+    function calcularMediaMovil(coordenadas) {
+        let sumaLatitud = 0;
+        let sumaLongitud = 0;
+        
+        for (let i = 0; i < coordenadas.length; i++) {
+            sumaLatitud += coordenadas[i].lat;
+            sumaLongitud += coordenadas[i].lon;
+        }
+
+        return {
+            lat: sumaLatitud / coordenadas.length,
+            lon: sumaLongitud / coordenadas.length
+        };
+    }
+
+    // Mapa de alertas
+    const alertas = {
+        1: 'Normal',
+        2: 'Movimiento detectado',
+        3: 'Temperatura en cuba elevada',
+        4: 'Batería interna baja',
+        6: 'Desconectado. Sin tensión VR',
+        7: 'Inicio',
+        8: 'Conectado nuevamente'
+    };
+
+    function calcularNivelBateria(voltaje) {
+        let nivelBateria = ((voltaje - 3.1) / (4.01 - 3.1)) * 100;
+        return Math.max(0, Math.min(100, nivelBateria));
+    }
+
+    // obtener datos de la API y actualizar el mapa
+    async function actualizarMapa() {
+        try {
+            const response = await fetch('http://181.13.147.14:55999/apitele/apitele/read');
+            const data = await response.json();
+
+            if (data.length > 0) {
+                let ultimaMedicion = data[data.length - 1];
+
+                let lat = convertirDMMaDD(parseFloat(ultimaMedicion[27])); 
+                let lon = convertirDMMaDD(parseFloat(ultimaMedicion[29])); 
+                if (ultimaMedicion[28] === "S") lat = -lat;  // Si es hemisferio sur
+                if (ultimaMedicion[30] === "W") lon = -lon;  // Si es hemisferio oeste
+
+                // Agregar la nueva coordenada a la lista de coordenadas históricas
+                coordenadasHistoricas.push({ lat, lon });
+
+                // Limitar a las últimas 15 coordenadas
+                if (coordenadasHistoricas.length > 15) {
+                    coordenadasHistoricas.shift();
+                }
+                let coordenadasSuavizadas = calcularMediaMovil(coordenadasHistoricas);
+
+                // Obtener el zoom actual 
+                let zoomActual = map.getZoom();
+
+                let alertaId = parseInt(ultimaMedicion[35], 10);
+                let estadoAlerta = alertas[alertaId] || 'Desconocida'; 
+                let voltajeBateria = parseFloat(ultimaMedicion[26]);
+                let nivelBateria = calcularNivelBateria(voltajeBateria);
+
+                // Relacion del TI
+                const relacion_ct = 500/5;
+
+                //
+
+                // Mover el marcador a la nueva ubicación suavizada
+                marker.setLatLng([coordenadasSuavizadas.lat, coordenadasSuavizadas.lon]).bindPopup(`
+                    <b>Dispositivo:</b> ${ultimaMedicion[0]}<br>
+                    <b>Señal GSM:</b> ${(ultimaMedicion[1] * (100 / 31)).toFixed(0)}%<br>
+                    <b>Calidad GPS:</b> ${(ultimaMedicion[32] * (100/12)).toFixed(0)}%<br>
+                    <b>Batería:</b> ${nivelBateria.toFixed(0)}%<br>
+                    <b>Fecha GPS:</b> ${ultimaMedicion[3]}<br>
+                    <b>Hora GPS:</b> ${ultimaMedicion[4]}<br>
+                    <b>VR:</b> ${ultimaMedicion[12]}V - <b>VS:</b> ${ultimaMedicion[16]}V - <b>VT:</b> ${ultimaMedicion[20]}V<br>
+                    <b>IR_ct:</b> ${ultimaMedicion[13]}A - <b>IS_ct:</b> ${ultimaMedicion[17]}A - <b>IT_ct:</b> ${ultimaMedicion[21]}A<br>
+                    <b>PR_ct:</b> ${ultimaMedicion[15]}W - <b>PS_ct:</b> ${ultimaMedicion[19]}W - <b>PT_ct:</b> ${ultimaMedicion[23]}W<br>
+                    <b>IR:</b> ${ultimaMedicion[13]*relacion_ct}A - <b>IS:</b> ${ultimaMedicion[17]*relacion_ct}A - <b>IT:</b> ${ultimaMedicion[21]*relacion_ct}A<br>
+                    <b>PR:</b> ${(ultimaMedicion[15] * relacion_ct / 1000).toFixed(1)}KW - <b>PS:</b> ${(ultimaMedicion[19] * relacion_ct / 1000).toFixed(1)}KW - <b>PT:</b> ${(ultimaMedicion[23] * relacion_ct / 1000).toFixed(1)}KW<br>
+                    <b>CosR:</b> ${ultimaMedicion[14]} - <b>CosS:</b> ${ultimaMedicion[18]} - <b>CosT:</b> ${ultimaMedicion[22]}<br>
+                    <b>Temperatura Cuba:</b> ${ultimaMedicion[34]}°C<br>
+                    <b>Temperatura Dispositivo:</b> ${ultimaMedicion[33]}°C<br>
+                    <b>Estado:</b> ${estadoAlerta}
+                `);
+
+                // Actualizar la vista sin cambiar el zoom
+                map.setView([coordenadasSuavizadas.lat, coordenadasSuavizadas.lon], zoomActual);
+            } else {
+                console.error("Datos de ubicación no disponibles.");
+            }
+        } catch (error) {
+            console.error("Error obteniendo datos:", error);
+        }
+    }
+
+    // Llamar a la función al cargar la página y actualizar cada 10 segundos
+    actualizarMapa();
+    setInterval(actualizarMapa, 10000);
+</script>
+
+</body>
+</html>
